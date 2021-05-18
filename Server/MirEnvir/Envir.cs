@@ -54,7 +54,7 @@ namespace Server.MirEnvir
         public static object LoadLock = new object();
 
         public const int MinVersion = 60;
-        public const int Version = 85;
+        public const int Version = 87;
         public const int CustomVersion = 0;
         public static readonly string DatabasePath = Path.Combine(".", "Server.MirDB");
         public static readonly string AccountPath = Path.Combine(".", "Server.MirADB");
@@ -128,10 +128,15 @@ namespace Server.MirEnvir
         public List<Map> MapList = new List<Map>();
         public List<SafeZoneInfo> StartPoints = new List<SafeZoneInfo>(); 
         public List<ItemInfo> StartItems = new List<ItemInfo>();
+
         public List<PlayerObject> Players = new List<PlayerObject>();
+        public List<SpellObject> Spells = new List<SpellObject>();
+        public List<NPCObject> NPCs = new List<NPCObject>();
+
         public LightSetting Lights;
         public LinkedList<MapObject> Objects = new LinkedList<MapObject>();
         public Dictionary<int, NPCScript> Scripts = new Dictionary<int, NPCScript>();
+
 
         public List<ConquestInfo> ConquestInfos = new List<ConquestInfo>();
         public List<ConquestObject> Conquests = new List<ConquestObject>();
@@ -835,27 +840,13 @@ namespace Server.MirEnvir
                 {
                     if (info.ItemType == MarketItemType.Auction && info.CurrentBid > info.Price)
                     {
-                        if (info.CurrentBuyerInfo.AccountInfo.Gold < info.CurrentBid)
-                        {
-                            info.Expired = true;
-                        }
-                        else
-                        {
-                            string message = string.Format("You won {0} for {1:#,##0} Gold.", info.Item.FriendlyName, info.CurrentBid);
+                        string message = string.Format("You won {0} for {1:#,##0} Gold.", info.Item.FriendlyName, info.CurrentBid);
 
-                            info.Sold = true;
-                            MailCharacter(info.CurrentBuyerInfo, info.Item, customMessage: message);
+                        info.Sold = true;
+                        MailCharacter(info.CurrentBuyerInfo, item: info.Item, customMessage: message);
 
-                            info.CurrentBuyerInfo.AccountInfo.Gold -= info.CurrentBid;
- 
-                            if (info.CurrentBuyerInfo.Player != null)
-                            {
-                                info.CurrentBuyerInfo.Player.Enqueue(new S.LoseGold { Gold = info.CurrentBid });
-                            }
-
-                            MessageAccount(info.CurrentBuyerInfo.AccountInfo, string.Format("You bought {0} for {1:#,##0} Gold", info.Item.FriendlyName, info.CurrentBid), ChatType.Hint);
-                            MessageAccount(info.SellerInfo.AccountInfo, string.Format("You sold {0} for {1:#,##0} Gold", info.Item.FriendlyName, info.CurrentBid), ChatType.Hint);
-                        }
+                        MessageAccount(info.CurrentBuyerInfo.AccountInfo, string.Format("You bought {0} for {1:#,##0} Gold", info.Item.FriendlyName, info.CurrentBid), ChatType.Hint);
+                        MessageAccount(info.SellerInfo.AccountInfo, string.Format("You sold {0} for {1:#,##0} Gold", info.Item.FriendlyName, info.CurrentBid), ChatType.Hint);
                     }
                     else
                     {
@@ -2864,12 +2855,6 @@ namespace Server.MirEnvir
             return instanceValue < instanceMapList.Count() ? instanceMapList[instanceValue] : null;
         }
 
-        public MapObject GetObject(uint objectID)
-        {
-            //TODO - Remove this. Have separate permanent lists for NPCs/Spells instead
-            return Objects.FirstOrDefault(e => e.ObjectID == objectID);
-        }
-
         public MonsterInfo GetMonsterInfo(int index)
         {
             for (var i = 0; i < MonsterInfoList.Count; i++)
@@ -2992,10 +2977,11 @@ namespace Server.MirEnvir
         }
 
 
-        public void MailCharacter(CharacterInfo info, UserItem item, int reason = 0, string customMessage = null)
+        public void MailCharacter(CharacterInfo info, UserItem item = null, uint gold = 0, int reason = 0, string customMessage = null)
         {
             string sender = "Bichon Administrator";
-            string message = "You have been mailed an item due to the following reason:\r\n\r\n";
+
+            string message = "You have been mailed due to the following reason:\r\n\r\n";
 
             switch (reason)
             {
@@ -3013,10 +2999,14 @@ namespace Server.MirEnvir
             MailInfo mail = new MailInfo(info.Index)
             {
                 Sender = sender,
-                Message = message
+                Message = message,
+                Gold = gold
             };
 
-            mail.Items.Add(item);
+            if (item != null)
+            {
+                mail.Items.Add(item);
+            }
 
             mail.Send();
         }
@@ -3392,6 +3382,8 @@ namespace Server.MirEnvir
 
         public void ReloadNPCs()
         {
+            SaveGoods(true);
+
             var keys = Scripts.Keys;
 
             foreach (var key in keys)

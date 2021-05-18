@@ -1,18 +1,14 @@
-﻿using System.Collections.Generic;
-using System;
+﻿using System;
 using System.Drawing;
 using Server.MirDatabase;
 using Server.MirEnvir;
 using S = ServerPackets;
-using System.Linq;
-using System.Text;
 
 namespace Server.MirObjects.Monsters
 {
-    // TODO: ADD ATTACK AS PER ANIMATIONS 354 - DASH THROUGH PLAYER ATTACK?
-    class DemonWolf : MonsterObject
+    public class AxePlant : MonsterObject
     {
-        protected internal DemonWolf(MonsterInfo info)
+        protected internal AxePlant(MonsterInfo info)
             : base(info)
         {
         }
@@ -25,14 +21,14 @@ namespace Server.MirObjects.Monsters
             int x = Math.Abs(Target.CurrentLocation.X - CurrentLocation.X);
             int y = Math.Abs(Target.CurrentLocation.Y - CurrentLocation.Y);
 
-            if (x > 5 || y > 5) return false;
+            if (x > 2 || y > 2) return false;
 
-            return (x == 0) || (y == 0) || (x == y);
+
+            return (x <= 1 && y <= 1) || (x == y || x % 2 == y % 2);
         }
 
         protected override void Attack()
         {
-            ShockTime = 0;
 
             if (!Target.IsAttackTarget(this))
             {
@@ -41,31 +37,20 @@ namespace Server.MirObjects.Monsters
             }
 
             Direction = Functions.DirectionFromPoint(CurrentLocation, Target.CurrentLocation);
-            bool ranged = CurrentLocation == Target.CurrentLocation || !Functions.InRange(CurrentLocation, Target.CurrentLocation, 1);
 
-            ActionTime = Envir.Time + 300;
+            bool range = !Functions.InRange(CurrentLocation, Target.CurrentLocation, 1);
+
+            ActionTime = Envir.Time + 500;
             AttackTime = Envir.Time + AttackSpeed;
+            ShockTime = 0;
 
-            int damage = GetAttackPower(Stats[Stat.MinDC], Stats[Stat.MaxDC]);
-            if (!ranged)
-            {
-                Broadcast(new S.ObjectAttack { ObjectID = ObjectID, Direction = Direction, Location = CurrentLocation });
-                if (damage == 0) return;
-
-                Target.Attacked(this, damage, DefenceType.MACAgility);
-            }
-            else
-            {
-                Broadcast(new S.ObjectRangeAttack { ObjectID = ObjectID, Direction = Direction, Location = CurrentLocation });
-
-                LineAttack(6);
-
-                AttackTime = Envir.Time + AttackSpeed;
-                ActionTime = Envir.Time + 300;
-            }
+            Broadcast(new S.ObjectAttack { ObjectID = ObjectID, Direction = Direction, Location = CurrentLocation });
+            LineAttack(2);
         }
+
         private void LineAttack(int distance)
         {
+
             int damage = GetAttackPower(Stats[Stat.MinDC], Stats[Stat.MaxDC]);
             if (damage == 0) return;
 
@@ -74,7 +59,11 @@ namespace Server.MirObjects.Monsters
                 Point target = Functions.PointMove(CurrentLocation, Direction, i);
 
                 if (target == Target.CurrentLocation)
-                    Target.Attacked(this, damage, DefenceType.MACAgility);
+                {
+                    int delay = Functions.MaxDistance(CurrentLocation, Target.CurrentLocation) * 50 + 700; //50 MS per Step
+                    DelayedAction action = new DelayedAction(DelayedType.Damage, Envir.Time + delay, Target, damage, DefenceType.ACAgility);
+                    ActionList.Add(action);
+                }
                 else
                 {
                     if (!CurrentMap.ValidPoint(target)) continue;
@@ -88,19 +77,16 @@ namespace Server.MirObjects.Monsters
                         if (ob.Race == ObjectType.Monster || ob.Race == ObjectType.Player)
                         {
                             if (!ob.IsAttackTarget(this)) continue;
-                            ob.Attacked(this, damage, DefenceType.MACAgility);
 
-                            if (Envir.Random.Next(10) == 0)
-                            {
-                                int poisonLength = 5;
-                                Target.ApplyPoison(new Poison { PType = PoisonType.Stun, Duration = poisonLength, TickSpeed = 1000 }, this);
-                                Broadcast(new S.ObjectEffect { ObjectID = Target.ObjectID, Effect = SpellEffect.Stunned, Time = (uint)poisonLength * 1000 });
-                            }
+                            int delay = Functions.MaxDistance(CurrentLocation, Target.CurrentLocation) * 50 + 700; //50 MS per Step
+                            DelayedAction action = new DelayedAction(DelayedType.Damage, Envir.Time + delay, ob, damage, DefenceType.ACAgility);
+                            ActionList.Add(action);                            
                         }
                         else continue;
 
                         break;
                     }
+
                 }
             }
         }

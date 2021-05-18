@@ -2096,7 +2096,7 @@ namespace Server.MirObjects
 
             for (int i = 0; i < Info.Buffs.Count; i++)
             {
-                AddBuff(Info.Buffs[i].Type, this, (int)Math.Min(Info.Buffs[i].ExpireTime, int.MaxValue), Info.Buffs[i].Stats, Info.Buffs[i].Visible, Info.Buffs[i].Infinite, Info.Buffs[i].Stackable);       
+                AddBuff(Info.Buffs[i].Type, this, (int)Math.Min(Info.Buffs[i].ExpireTime, int.MaxValue), Info.Buffs[i].Stats, Info.Buffs[i].Visible, Info.Buffs[i].Infinite, Info.Buffs[i].Stackable, true, Info.Buffs[i].Values);       
             }
 
             Info.Buffs.Clear();
@@ -8463,7 +8463,7 @@ namespace Server.MirObjects
 
             if (!CurrentMap.ValidPoint(location)) return;
 
-            var portalCount = Envir.Objects.Count(ob => ob.Race == ObjectType.Spell && ((SpellObject)ob).Spell == Spell.Portal && ((SpellObject)ob).Caster == this);
+            var portalCount = Envir.Spells.Count(x => x.Spell == Spell.Portal && x.Caster == this);
 
             if (portalCount == 2) return;
 
@@ -10396,7 +10396,6 @@ namespace Server.MirObjects
 
             var packet = new S.AddBuff { Buff = b.ToClientBuff() };
 
-            packet.Buff.Values = values;
             packet.Buff.ExpireTime -= Envir.Time;
 
             Enqueue(packet);
@@ -11903,7 +11902,7 @@ namespace Server.MirObjects
                 return;
             }
 
-            bool canRepair = false, canUpgrade = false;
+            bool canRepair = false, canUpgrade = false, canSlotUpgrade = false;
 
             if (tempFrom.Info.Type != ItemType.Gem)
             {
@@ -11958,6 +11957,38 @@ namespace Server.MirObjects
                         return;
                     }
                     break;
+                case 7: //slots
+                    if (tempTo.Info.Bind.HasFlag(BindMode.DontUpgrade) || tempTo.Info.Unique != SpecialItemMode.None)
+                    {
+                        Enqueue(p);
+                        return;
+                    }
+                    if (tempTo.RentalInformation != null && tempTo.RentalInformation.BindingFlags.HasFlag(BindMode.DontUpgrade))
+                    {
+                        Enqueue(p);
+                        return;
+                    }
+                    if (!ValidGemForItem(tempFrom, (byte)tempTo.Info.Type))
+                    {
+                        ReceiveChat("Invalid combination.", ChatType.Hint);
+                        Enqueue(p);
+                        return;
+                    }
+                    if (tempTo.Info.RandomStats == null)
+                    {
+                        ReceiveChat("Item already has max sockets.", ChatType.Hint);
+                        Enqueue(p);
+                        return;
+                    }
+                    if (tempTo.Info.RandomStats.SlotMaxStat <= tempTo.Slots.Length)
+                    {
+                        ReceiveChat("Item already has max sockets.", ChatType.Hint);
+                        Enqueue(p);
+                        return;
+                    }
+
+                    canSlotUpgrade = true;
+                    break;
                 case 3: //gems
                 case 4: //orbs
                     if (tempTo.Info.Bind.HasFlag(BindMode.DontUpgrade) || tempTo.Info.Unique != SpecialItemMode.None)
@@ -11974,7 +12005,7 @@ namespace Server.MirObjects
 
                     if ((tempTo.GemCount >= tempFrom.Info.Stats[Stat.CriticalDamage]) || (GetCurrentStatCount(tempFrom, tempTo) >= tempFrom.Info.Stats[Stat.HPDrainRatePercent]))
                     {
-                        ReceiveChat("Item has already reached maximum added stats", ChatType.Hint);
+                        ReceiveChat("Item has already reached maximum added stats.", ChatType.Hint);
                         Enqueue(p);
                         return;
                     }
@@ -12234,6 +12265,13 @@ namespace Server.MirObjects
                 tempTo.GemCount++;
                 ReceiveChat("Item has been upgraded.", ChatType.Hint);
                 Enqueue(new S.ItemUpgraded { Item = tempTo });
+            }
+
+            if (canSlotUpgrade && Info.Inventory[indexTo] != null)
+            {
+                tempTo.SetSlotSize(tempTo.Slots.Length + 1);
+                ReceiveChat("Item has increased its sockets.", ChatType.Hint);
+                Enqueue(new S.ItemSlotSizeChanged { UniqueID = tempTo.UniqueID, SlotSize = tempTo.Slots.Length });
             }
 
             if (tempFrom.Count > 1) tempFrom.Count--;
@@ -12754,7 +12792,7 @@ namespace Server.MirObjects
         }
         public void GainItemMail(UserItem item, int reason)
         {
-            Envir.MailCharacter(Info, item, reason);
+            Envir.MailCharacter(Info, item: item, reason: reason);
         }
 
         private bool DropItem(UserItem item, int range = 1, bool DeathDrop = false)
@@ -13328,9 +13366,8 @@ namespace Server.MirObjects
             Enqueue(new S.GainedQuestItem { Item = clonedItem });
 
             AddQuestItem(item);
-
-
         }
+
         public void TakeQuestItem(ItemInfo uItem, ushort count)
         {
             for (int o = 0; o < Info.QuestInventory.Length; o++)
@@ -14623,7 +14660,7 @@ namespace Server.MirObjects
         #endregion
 
         #region Consignment
-        public void ConsignItem(ulong uniqueID, uint price)
+        public void ConsignItem(ulong uniqueID, uint price, MarketPanelType panelType)
         {
             S.ConsignItem p = new S.ConsignItem { UniqueID = uniqueID };
 
@@ -14633,7 +14670,7 @@ namespace Server.MirObjects
                 return;
             }
 
-            switch (MarketPanelType)
+            switch (panelType)
             {
                 case MarketPanelType.Consign:
                     {
@@ -14924,6 +14961,12 @@ namespace Server.MirObjects
                             return;
                         }
 
+                        if (!Envir.Auctions.Contains(auction))
+                        {
+                            Enqueue(new S.MarketFail { Reason = 3 });
+                            return;
+                        }
+
                         if (!CanGainItem(auction.Item))
                         {
                             Enqueue(new S.MarketFail { Reason = 5 });
@@ -14963,9 +15006,19 @@ namespace Server.MirObjects
                                 return;
                             }
 
+                            if (auction.CurrentBuyerInfo != null)
+                            {
+                                string message = string.Format("You have been outbid on {0}. Refunded {1:#,##0} Gold.", auction.Item.FriendlyName, auction.CurrentBid);
+
+                                Envir.MailCharacter(auction.CurrentBuyerInfo, gold: auction.CurrentBid, customMessage: message);
+                            }
+
                             auction.CurrentBid = bidPrice;
                             auction.CurrentBuyerIndex = Info.Index;
                             auction.CurrentBuyerInfo = Info;
+
+                            Account.Gold -= bidPrice;
+                            Enqueue(new S.LoseGold { Gold = bidPrice });
 
                             Envir.MessageAccount(auction.SellerInfo.AccountInfo, string.Format("Someone has bid {1:#,##0} Gold for {0}", auction.Item.FriendlyName, auction.CurrentBid), ChatType.Hint);
                             Enqueue(new S.MarketSuccess { Message = string.Format("You bid {1:#,##0} Gold for {0}", auction.Item.FriendlyName, auction.CurrentBid) });
@@ -14975,6 +15028,83 @@ namespace Server.MirObjects
                         return;
                     }
                 }
+            }
+
+            Enqueue(new S.MarketFail { Reason = 7 });
+        }
+
+        public void MarketSellNow(ulong auctionID)
+        {
+            if (Dead)
+            {
+                Enqueue(new S.MarketFail { Reason = 0 });
+                return;
+            }
+
+            if (NPCPage == null || !String.Equals(NPCPage.Key, NPCScript.MarketKey, StringComparison.CurrentCultureIgnoreCase))
+            {
+                Enqueue(new S.MarketFail { Reason = 1 });
+                return;
+            }
+
+            for (int n = 0; n < CurrentMap.NPCs.Count; n++)
+            {
+                NPCObject ob = CurrentMap.NPCs[n];
+                if (ob.ObjectID != NPCObjectID) continue;
+                if (!Functions.InRange(ob.CurrentLocation, CurrentLocation, Globals.DataRange)) return;
+
+                foreach (AuctionInfo auction in Account.Auctions)
+                {
+                    if (auction.AuctionID != auctionID) continue;
+
+                    if (auction.ItemType != MarketItemType.Auction)
+                    {
+                        return;
+                    }
+
+                    if (auction.CurrentBid <= auction.Price || auction.CurrentBuyerInfo == null)
+                    {
+                        Enqueue(new S.MarketFail { Reason = 9 });
+                        return;
+                    }
+
+                    if (auction.Sold && auction.Expired)
+                    {
+                        MessageQueue.Enqueue(string.Format("Auction both sold and Expired {0}", Account.AccountID));
+                        return;
+                    }
+
+                    if (auction.Expired || auction.Sold || Envir.Now >= auction.ConsignmentDate.AddDays(Globals.ConsignmentLength))
+                    {
+                        Enqueue(new S.MarketFail { Reason = 10 });
+                        return;
+                    }
+
+                    uint cost = auction.CurrentBid;
+
+                    uint gold = (uint)Math.Max(0, cost - cost * Globals.Commission);
+
+                    if (!CanGainGold(auction.CurrentBid))
+                    {
+                        Enqueue(new S.MarketFail { Reason = 8 });
+                        return;
+                    }
+
+                    auction.Sold = true;
+
+                    string message = string.Format("You won {0} for {1:#,##0} Gold.", auction.Item.FriendlyName, auction.CurrentBid);
+
+                    Envir.MailCharacter(auction.CurrentBuyerInfo, item: auction.Item, customMessage: message);
+                    Envir.MessageAccount(auction.CurrentBuyerInfo.AccountInfo, string.Format("You bought {0} for {1:#,##0} Gold", auction.Item.FriendlyName, auction.CurrentBid), ChatType.Hint);
+
+                    Account.Auctions.Remove(auction);
+                    Envir.Auctions.Remove(auction);
+                    GainGold(gold);
+                    Enqueue(new S.MarketSuccess { Message = string.Format("You sold {0} for {1:#,##0} Gold. \nEarnings: {2:#,##0} Gold.\nCommision: {3:#,##0} Gold.‎", auction.Item.FriendlyName, cost, gold, cost - gold) });
+                    MarketSearch(MatchName, MatchType);
+                    return;
+                }
+
             }
 
             Enqueue(new S.MarketFail { Reason = 7 });
@@ -15016,6 +15146,13 @@ namespace Server.MirObjects
                         {
                             Enqueue(new S.MarketFail { Reason = 5 });
                             return;
+                        }
+
+                        if (auction.CurrentBuyerInfo != null)
+                        {
+                            string message = string.Format("You have been outbid on {0}. Refunded {1:#,##0} Gold.", auction.Item.FriendlyName, auction.CurrentBid);
+
+                            Envir.MailCharacter(auction.CurrentBuyerInfo, gold: auction.CurrentBid, customMessage: message);
                         }
 
                         Account.Auctions.Remove(auction);
@@ -18606,52 +18743,71 @@ namespace Server.MirObjects
             Enqueue(new S.RefineItem { UniqueID = uniqueID });
 
 
-            short OrePurity = 0;
-            byte OreAmount = 0;
-            byte ItemAmount = 0;
-            short TotalDC = 0;
-            short TotalMC = 0;
-            short TotalSC = 0;
-            short RequiredLevel = 0;
-            short Durability = 0;
-            short CurrentDura = 0;
-            short AddedStats = 0;
-            UserItem Ingredient;
+            short orePurity = 0;
+            byte oreAmount = 0;
+            byte itemAmount = 0;
+            short totalDC = 0;
+            short totalMC = 0;
+            short totalSC = 0;
+            short requiredLevel = 0;
+            short durability = 0;
+            short currentDura = 0;
+            short addedStats = 0;
+            UserItem ingredient;
 
             for (int i = 0; i < Info.Refine.Length; i++)
             {
-                Ingredient = Info.Refine[i];
+                ingredient = Info.Refine[i];
 
-                if (Ingredient == null) continue;
-                if (Ingredient.Info.Type == ItemType.Weapon)
+                if (ingredient == null) continue;
+                if (ingredient.Info.Type == ItemType.Weapon)
                 {
                     Info.Refine[i] = null;
                     continue;
                 }
 
-                if ((Ingredient.Info.Stats[Stat.MaxDC] > 0) || (Ingredient.Info.Stats[Stat.MaxMC] > 0) || (Ingredient.Info.Stats[Stat.MaxSC] > 0))
+                if ((ingredient.Info.Stats[Stat.MaxDC] > 0) || (ingredient.Info.Stats[Stat.MaxMC] > 0) || (ingredient.Info.Stats[Stat.MaxSC] > 0))
                 {
-                    TotalDC += (short)(Ingredient.Info.Stats[Stat.MinDC] + Ingredient.Info.Stats[Stat.MaxDC] + Ingredient.AddedStats[Stat.MaxDC]);
-                    TotalMC += (short)(Ingredient.Info.Stats[Stat.MinMC] + Ingredient.Info.Stats[Stat.MaxMC] + Ingredient.AddedStats[Stat.MaxMC]);
-                    TotalSC += (short)(Ingredient.Info.Stats[Stat.MinSC] + Ingredient.Info.Stats[Stat.MaxSC] + Ingredient.AddedStats[Stat.MaxSC]);
-                    RequiredLevel += Ingredient.Info.RequiredAmount;
-                    if (Math.Floor(Ingredient.MaxDura / 1000M) == Math.Floor(Ingredient.Info.Durability / 1000M)) Durability++;
-                    if (Math.Floor(Ingredient.CurrentDura / 1000M) == Math.Floor(Ingredient.MaxDura / 1000M)) CurrentDura++;
-                    ItemAmount++;
+                    totalDC += (short)(ingredient.Info.Stats[Stat.MinDC] + ingredient.Info.Stats[Stat.MaxDC] + ingredient.AddedStats[Stat.MaxDC]);
+                    totalMC += (short)(ingredient.Info.Stats[Stat.MinMC] + ingredient.Info.Stats[Stat.MaxMC] + ingredient.AddedStats[Stat.MaxMC]);
+                    totalSC += (short)(ingredient.Info.Stats[Stat.MinSC] + ingredient.Info.Stats[Stat.MaxSC] + ingredient.AddedStats[Stat.MaxSC]);
+                    requiredLevel += ingredient.Info.RequiredAmount;
+                    if (Math.Floor(ingredient.MaxDura / 1000M) == Math.Floor(ingredient.Info.Durability / 1000M)) durability++;
+                    if (Math.Floor(ingredient.CurrentDura / 1000M) == Math.Floor(ingredient.MaxDura / 1000M)) currentDura++;
+                    itemAmount++;
                 }
 
-                if (Ingredient.Info.FriendlyName == Settings.RefineOreName)
+                if (ingredient.Info.FriendlyName == Settings.RefineOreName)
                 {
-                    OrePurity += (short)Math.Floor(Ingredient.CurrentDura / 1000M);
-                    OreAmount++;
+                    orePurity += (short)Math.Floor(ingredient.CurrentDura / 1000M);
+                    oreAmount++;
                 }
 
                 Info.Refine[i] = null;
             }
 
-            if ((TotalDC == 0) && (TotalMC == 0) && (TotalSC == 0))
+            if ((totalDC == 0) && (totalMC == 0) && (totalSC == 0))
             {
-                Info.CurrentRefine.RefinedValue = RefinedValue.None;
+                Info.CurrentRefine.RefineSuccessChance = 0;
+                //Info.CurrentRefine.RefinedValue = RefinedValue.None;
+                Info.CurrentRefine.RefineAdded = Settings.RefineIncrease;
+
+                if (Settings.RefineTime == 0)
+                {
+                    CollectRefine();
+                }
+                else
+                {
+                    ReceiveChat(String.Format("Your {0} is now being refined, please check back in {1} minute(s).", Info.CurrentRefine.FriendlyName, Settings.RefineTime), ChatType.System);
+                }
+
+                return;
+            }
+
+            if (oreAmount == 0)
+            {
+                Info.CurrentRefine.RefineSuccessChance = 0;
+                //Info.CurrentRefine.RefinedValue = RefinedValue.None;
                 Info.CurrentRefine.RefineAdded = Settings.RefineIncrease;
                 if (Settings.RefineTime == 0)
                 {
@@ -18664,89 +18820,67 @@ namespace Server.MirObjects
                 return;
             }
 
-            if (OreAmount == 0)
-            {
-                Info.CurrentRefine.RefinedValue = RefinedValue.None;
-                Info.CurrentRefine.RefineAdded = Settings.RefineIncrease;
-                if (Settings.RefineTime == 0)
-                {
-                    CollectRefine();
-                }
-                else
-                {
-                    ReceiveChat(String.Format("Your {0} is now being refined, please check back in {1} minute(s).", Info.CurrentRefine.FriendlyName, Settings.RefineTime), ChatType.System);
-                }
-                return;
-            }
 
+            short refineStat = 0;
 
-            short RefineStat = 0;
-
-            if ((TotalDC > TotalMC) && (TotalDC > TotalSC))
+            if ((totalDC > totalMC) && (totalDC > totalSC))
             {
                 Info.CurrentRefine.RefinedValue = RefinedValue.DC;
-                RefineStat = TotalDC;
+                refineStat = totalDC;
             }
 
-            if ((TotalMC > TotalDC) && (TotalMC > TotalSC))
+            if ((totalMC > totalDC) && (totalMC > totalSC))
             {
                 Info.CurrentRefine.RefinedValue = RefinedValue.MC;
-                RefineStat = TotalMC;
+                refineStat = totalMC;
             }
 
-            if ((TotalSC > TotalDC) && (TotalSC > TotalMC))
+            if ((totalSC > totalDC) && (totalSC > totalMC))
             {
                 Info.CurrentRefine.RefinedValue = RefinedValue.SC;
-                RefineStat = TotalSC;
+                refineStat = totalSC;
             }
 
             Info.CurrentRefine.RefineAdded = Settings.RefineIncrease;
 
 
-            int ItemSuccess = 0; //Chance out of 35%
+            int itemSuccess = 0; //Chance out of 35%
 
-            ItemSuccess += (RefineStat * 5) - Info.CurrentRefine.Info.RequiredAmount;
-            ItemSuccess += 5;
-            if (ItemSuccess > 10) ItemSuccess = 10;
-            if (ItemSuccess < 0) ItemSuccess = 0; //10%
-
-
-            if ((RequiredLevel / ItemAmount) > (Info.CurrentRefine.Info.RequiredAmount - 5)) ItemSuccess += 10; //20%
-            if (Durability == ItemAmount) ItemSuccess += 10; //30%
-            if (CurrentDura == ItemAmount) ItemSuccess += 5; //35%
-
-            int OreSuccess = 0; //Chance out of 35%
-
-            if (OreAmount >= ItemAmount) OreSuccess += 15; //15%
-            if ((OrePurity / OreAmount) >= (RefineStat / ItemAmount)) OreSuccess += 15; //30%
-            if (OrePurity == RefineStat) OreSuccess += 5; //35%
-
-            int LuckSuccess = 0; //Chance out of 10%
-
-            LuckSuccess = (Info.CurrentRefine.AddedStats[Stat.Luck] + 5);
-            if (LuckSuccess > 10) LuckSuccess = 10;
-            if (LuckSuccess < 0) LuckSuccess = 0;
+            itemSuccess += (refineStat * 5) - Info.CurrentRefine.Info.RequiredAmount;
+            itemSuccess += 5;
+            if (itemSuccess > 10) itemSuccess = 10;
+            if (itemSuccess < 0) itemSuccess = 0; //10%
 
 
-            int BaseSuccess = Settings.RefineBaseChance; //20% as standard
+            if ((requiredLevel / itemAmount) > (Info.CurrentRefine.Info.RequiredAmount - 5)) itemSuccess += 10; //20%
+            if (durability == itemAmount) itemSuccess += 10; //30%
+            if (currentDura == itemAmount) itemSuccess += 5; //35%
 
-            int SuccessChance = (ItemSuccess + OreSuccess + LuckSuccess + BaseSuccess);
+            int oreSuccess = 0; //Chance out of 35%
 
-            AddedStats = (byte)(Info.CurrentRefine.AddedStats[Stat.MaxDC] + Info.CurrentRefine.AddedStats[Stat.MaxMC] + Info.CurrentRefine.AddedStats[Stat.MaxSC]);
-            if (Info.CurrentRefine.Info.Type == ItemType.Weapon) AddedStats = (short)(AddedStats * Settings.RefineWepStatReduce);
-            else AddedStats = (short)(AddedStats * Settings.RefineItemStatReduce);
-            if (AddedStats > 50) AddedStats = 50;
+            if (oreAmount >= itemAmount) oreSuccess += 15; //15%
+            if ((orePurity / oreAmount) >= (refineStat / itemAmount)) oreSuccess += 15; //30%
+            if (orePurity == refineStat) oreSuccess += 5; //35%
 
-            SuccessChance -= AddedStats;
+            int luckSuccess = (Info.CurrentRefine.AddedStats[Stat.Luck] + 5); //Chance out of 10%
+            if (luckSuccess > 10) luckSuccess = 10;
+            if (luckSuccess < 0) luckSuccess = 0;
 
 
-            if (Envir.Random.Next(1, 100) > SuccessChance)
-                Info.CurrentRefine.RefinedValue = RefinedValue.None;
+            int baseSuccess = Settings.RefineBaseChance; //20% as standard
 
-            if (Envir.Random.Next(1, 100) < Settings.RefineCritChance)
-                Info.CurrentRefine.RefineAdded = (byte)(Info.CurrentRefine.RefineAdded * Settings.RefineCritIncrease);
+            int successChance = (itemSuccess + oreSuccess + luckSuccess + baseSuccess);
 
-            //END OF FORMULA (SET REFINEDVALUE TO REFINEDVALUE.NONE) REFINEADDED SHOULD BE > 0
+            addedStats = (byte)(Info.CurrentRefine.AddedStats[Stat.MaxDC] + Info.CurrentRefine.AddedStats[Stat.MaxMC] + Info.CurrentRefine.AddedStats[Stat.MaxSC]);
+            if (Info.CurrentRefine.Info.Type == ItemType.Weapon) addedStats = (short)(addedStats * Settings.RefineWepStatReduce);
+            else addedStats = (short)(addedStats * Settings.RefineItemStatReduce);
+            if (addedStats > 50) addedStats = 50;
+
+            successChance -= addedStats;
+
+            Info.CurrentRefine.RefineSuccessChance = successChance;
+
+            //END OF FORMULA
 
             if (Settings.RefineTime == 0)
             {
@@ -18810,19 +18944,15 @@ namespace Server.MirObjects
         }
         public void CheckRefine(ulong uniqueID)
         {
-            //Enqueue(new S.RepairItem { UniqueID = uniqueID });
-
             if (Dead) return;
 
             if (NPCPage == null || (!String.Equals(NPCPage.Key, NPCScript.RefineCheckKey, StringComparison.CurrentCultureIgnoreCase))) return;
-
-            UserItem temp = null;
 
             int index = -1;
 
             for (int i = 0; i < Info.Inventory.Length; i++)
             {
-                temp = Info.Inventory[i];
+                UserItem temp = Info.Inventory[i];
                 if (temp == null || temp.UniqueID != uniqueID) continue;
                 index = i;
                 break;
@@ -18836,6 +18966,15 @@ namespace Server.MirObjects
                 return;
             }
 
+            if (Envir.Random.Next(1, 100) > Info.Inventory[index].RefineSuccessChance)
+            {
+                Info.Inventory[index].RefinedValue = RefinedValue.None;
+            }
+
+            if (Envir.Random.Next(1, 100) < Settings.RefineCritChance)
+            {
+                Info.Inventory[index].RefineAdded = (byte)(Info.Inventory[index].RefineAdded * Settings.RefineCritIncrease);
+            }
 
             if ((Info.Inventory[index].RefinedValue == RefinedValue.DC) && (Info.Inventory[index].RefineAdded > 0))
             {
@@ -18843,6 +18982,8 @@ namespace Server.MirObjects
                 Info.Inventory[index].AddedStats[Stat.MaxDC] = (int)Math.Min(int.MaxValue, Info.Inventory[index].AddedStats[Stat.MaxDC] + Info.Inventory[index].RefineAdded);
                 Info.Inventory[index].RefineAdded = 0;
                 Info.Inventory[index].RefinedValue = RefinedValue.None;
+                Info.Inventory[index].RefineSuccessChance = 0;
+
             }
             else if ((Info.Inventory[index].RefinedValue == RefinedValue.MC) && (Info.Inventory[index].RefineAdded > 0))
             {
@@ -18850,6 +18991,8 @@ namespace Server.MirObjects
                 Info.Inventory[index].AddedStats[Stat.MaxMC] = (int)Math.Min(int.MaxValue, Info.Inventory[index].AddedStats[Stat.MaxMC] + Info.Inventory[index].RefineAdded);
                 Info.Inventory[index].RefineAdded = 0;
                 Info.Inventory[index].RefinedValue = RefinedValue.None;
+                Info.Inventory[index].RefineSuccessChance = 0;
+
             }
             else if ((Info.Inventory[index].RefinedValue == RefinedValue.SC) && (Info.Inventory[index].RefineAdded > 0))
             {
@@ -18857,11 +19000,13 @@ namespace Server.MirObjects
                 Info.Inventory[index].AddedStats[Stat.MaxSC] = (int)Math.Min(int.MaxValue, Info.Inventory[index].AddedStats[Stat.MaxSC] + Info.Inventory[index].RefineAdded);
                 Info.Inventory[index].RefineAdded = 0;
                 Info.Inventory[index].RefinedValue = RefinedValue.None;
+                Info.Inventory[index].RefineSuccessChance = 0;
             }
             else if ((Info.Inventory[index].RefinedValue == RefinedValue.None) && (Info.Inventory[index].RefineAdded > 0))
             {
                 ReceiveChat(String.Format("Your {0} smashed into a thousand pieces upon testing.", Info.Inventory[index].FriendlyName), ChatType.System);
                 Enqueue(new S.RefineItem { UniqueID = Info.Inventory[index].UniqueID });
+                Info.Inventory[index].RefineSuccessChance = 0;
                 Info.Inventory[index] = null;
                 return;
             }

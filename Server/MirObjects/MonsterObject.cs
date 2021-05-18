@@ -293,6 +293,32 @@ namespace Server.MirObjects
                     return new PlagueCrab(info);
                 case 139:
                     return new CreeperPlant(info);
+                case 140:
+                    return new Nadz(info);
+                case 141:
+                    return new AvengingSpirit(info);
+                case 142:
+                    return new AvengingWarrior(info);
+                case 143:
+                    return new AxePlant(info);
+                case 144:
+                    return new TurtleGrass(info);
+                case 145:
+                    return new ManTree(info);
+                case 146:
+                    return new FrozenFighter(info);
+                case 147:
+                    return new Bear(info);
+                case 148:
+                    return new FrozenKnight(info);
+                case 149:
+                    return new IcePhantom(info);
+                case 150:
+                    return new SnowWolf(info);
+                case 151:
+                    return new BlackTortoise(info);
+                case 152:
+                    return new DragonWarrior(info);
 
 
                 //unfinished

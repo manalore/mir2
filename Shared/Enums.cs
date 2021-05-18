@@ -1,5 +1,17 @@
 ﻿using System;
 
+public enum MouseCursor : byte
+{
+    None,
+    Default,
+    Attack,
+    AttackRed,
+    NPCTalk,
+    TextPrompt,
+    Trash,
+    Upgrade
+}
+
 public enum PanelType : byte
 {
     Buy,
@@ -495,28 +507,28 @@ public enum Monster : ushort
     OmaAssassin = 314, // Done (DG)
     OmaMage = 315, // Done (DG)
     OmaWitchDoctor = 316,
-    LightningBead = 317,
-    HealingBead = 318,
-    PowerUpBead = 319,
-    DarkOmaKing = 320,
+    LightningBead = 317, // Minion of DarkOmaKing
+    HealingBead = 318, // Minion of DarkOmaKing
+    PowerUpBead = 319, // Minion of DarkOmaKing
+    DarkOmaKing = 320, //TODO - BOSS AI
     CaveMage = 321,
     Mandrill = 322, // INCOMPLETE - TODO: TELEPORT NEEDS CODING
     PlagueCrab = 323, // Done (DG) - Note: There are seven frames missing from the DrawEffect in the lib (causes die effect to look off).
     CreeperPlant = 324, //Done (DG)
     FloatingWraith = 325, //Done (DG) - Use AI 8 (AxeSkeleton)
-    ArmedPlant = 326,
-    AvengerPlant = 327,
-    Nadz = 328,
-    AvengingSpirit = 329,
-    AvengingWarrior = 330,
-    AxePlant = 331,
+    ArmedPlant = 326, //Done (DG)
+    AvengerPlant = 327, //Done (DG)
+    Nadz = 328, // Done (DG)
+    AvengingSpirit = 329, //Done (DG)
+    AvengingWarrior = 330, //Done (DG)
+    AxePlant = 331, //Done (DG)
     WoodBox = 332,
     ClawBeast = 333,
-    KillerPlant = 334,
-    SackWarrior = 335,
-    WereTiger = 336,
-    KingHydrax = 337,
-    Hydrax = 338,
+    KillerPlant = 334, //TODO - BOSS AI
+    SackWarrior = 335, // Done (DG)
+    WereTiger = 336, // Done (DG) - USE AI 113 (BloodBaboon) for Attack2. 
+    KingHydrax = 337, //TODO - BOSS AI
+    Hydrax = 338, // Done (DG) - No AI
     HornedMage = 339,
     Basiloid = 340,
     HornedArcher = 341,
@@ -528,33 +540,32 @@ public enum Monster : ushort
     BoulderSpirit = 347,
     HornedCommander = 348,
     MoonStone = 349,
-
     SunStone = 350,
     LightningStone = 351,
-    Turtlegrass = 352,
-    Mantree = 353,
-    Bear = 354,
-    Leopard = 355,
+    Turtlegrass = 352, // Done (DG)
+    ManTree = 353, //Done (DG)
+    Bear = 354, //Done (DG)
+    Leopard = 355, // Basic mob (No AI or spell animations) (DG)
     ChieftainArcher = 356,
-    ChieftainSword = 357,
+    ChieftainSword = 357, //TODO - BOSS AI
     StoningSpider = 358, //Archer Spell mob (not yet coded)
     VampireSpider = 359, //Archer Spell mob
     SpittingToad = 360, //Archer Spell mob
     SnakeTotem = 361, //Archer Spell mob
     CharmedSnake = 362, //Archer Spell mob
-    FrozenSoldier = 363,
-    FrozenFighter = 364,
-    FrozenArcher = 365,
-    FrozenKnight = 366,
-    FrozenGolem = 367,
-    IcePhantom = 368,
-    SnowWolf = 369,
-    SnowWolfKing = 370,
-    WaterDragon = 371,
-    BlackTortoise = 372,
-    Manticore = 373,
-    DragonWarrior = 374,
-    DragonArcher = 375,
+    FrozenSoldier = 363, // Basic mob (No AI or spell animations) (DG)
+    FrozenFighter = 364, // Done (DG)
+    FrozenArcher = 365, //Done (DG) - Use AI 8 (AxeSkeleton)
+    FrozenKnight = 366, // Done (DG)
+    FrozenGolem = 367, // Done (DG) - Basic Attack1 mob
+    IcePhantom = 368, //Done (DG) - //TODO - AI needs revisiting (blue explosion and snakes)
+    SnowWolf = 369, // Done (DG)
+    SnowWolfKing = 370, //TODO - BOSS AI
+    WaterDragon = 371, //TODO - BOSS AI
+    BlackTortoise = 372, //Done (DG) //TODO - figure out what the blue flashes are for (Critical hits??)
+    Manticore = 373, //TODO - BOSS AI
+    DragonWarrior = 374, //Done (DG)
+    DragonArcher = 375, //TODO - Wind Arrow spell and Tornado (minion?)    
     Kirin = 376,
     Guard3 = 377,
     ArcherGuard3 = 378,
@@ -1415,6 +1426,7 @@ public enum ServerPacketIds : short
     CraftItem,
     RepairItem,
     ItemRepaired,
+    ItemSlotSizeChanged,
     NewMagic,
     RemoveMagic,
     MagicLeveled,
@@ -1622,6 +1634,7 @@ public enum ClientPacketIds : short
     MarketPage,
     MarketBuy,
     MarketGetBack,
+    MarketSellNow,
     RequestUserName,
     RequestChatItem,
     EditGuildMember,
